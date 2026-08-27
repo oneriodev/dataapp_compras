@@ -14,6 +14,7 @@ import pandas as pd
 
 from core.metrics import (
     calcular_curva_abc,
+    calcular_proporcao_gasto,
     compute_kpis,
     listar_margem_negativa,
     top_n_por_metrica,
@@ -28,22 +29,13 @@ def _fmt_moeda(valor: float) -> str:
 
 
 def gerar_insights(df: pd.DataFrame, mapping: dict) -> list:
-    """
-    Gera a lista de insights do relatório.
-
-    Retorna
-    -------
-    list[dict]
-        Cada item: {"titulo": str, "texto": str, "nivel": str}
-        nivel é um de: "critico", "alerta", "info", "positivo"
-        (usado só para escolher o destaque visual na tela).
-    """
     insights = []
     kpis = compute_kpis(df, mapping)
 
     insights.extend(_insight_visao_geral(kpis))
     insights.extend(_insight_curva_abc(df, mapping))
     insights.extend(_insight_margem_negativa(df, mapping))
+    insights.extend(_insight_gastos_proporcionais(df, mapping))  # <- nova linha
     insights.extend(_insight_maiores_gastos(df, mapping))
 
     return insights
@@ -172,3 +164,71 @@ def _insight_maiores_gastos(df: pd.DataFrame, mapping: dict) -> list:
         "especialmente se alguma delas também aparecer entre os itens de menor margem."
     )
     return [{"titulo": "Carga Tributária por Marca", "texto": texto, "nivel": "info"}]
+
+def _insight_gastos_proporcionais(df: pd.DataFrame, mapping: dict) -> list:
+    """
+    Identifica marcas cujo Custo Líquido representa uma fatia
+    desproporcional do faturamento — diferente do total absoluto (que
+    reflete volume), aqui uma marca pequena com preço mal calibrado
+    aparece com o mesmo destaque que uma marca grande.
+    """
+    if not (mapping.get("marca") and mapping.get("faturamento") and mapping.get("custo_liquido")):
+        return []
+
+    faturamento_total = df[mapping["faturamento"]].sum()
+    if not faturamento_total:
+        return []
+
+    # Ignora marcas com faturamento irrelevante (<1% do total), que
+    # distorcem o percentual por amostra pequena sem significar
+    # problema real de precificação.
+    limiar_relevancia = faturamento_total * 0.01
+    prop = calcular_proporcao_gasto(
+        df, mapping["marca"], mapping["faturamento"], mapping["custo_liquido"],
+        faturamento_minimo=limiar_relevancia,
+    )
+    if prop.empty:
+        return []
+
+    pior = prop.iloc[0]
+    pct = pior["percentual_sobre_faturamento"]
+    col_marca = mapping["marca"]
+
+    if pct < 80:
+        texto = (
+            f"Nenhuma marca relevante apresenta Custo Líquido desproporcional ao "
+            f"faturamento — a maior proporção encontrada é de {pior[col_marca]} "
+            f"({pct:.1f}% do faturamento), dentro de uma faixa saudável."
+        )
+        return [{"titulo": "Custo Líquido em Proporção ao Faturamento", "texto": texto, "nivel": "positivo"}]
+
+    texto = (
+        f"{pior[col_marca]} tem o Custo Líquido mais desproporcional ao faturamento "
+        f"entre as marcas relevantes: {pct:.1f}% do faturamento vira custo"
+    )
+    if pct >= 100:
+        texto += (
+            " — ou seja, essa marca opera no prejuízo mesmo antes de considerar "
+            "despesas adicionais. Diferente de simplesmente vender pouco, aqui o "
+            "problema é estrutural: o custo não está coberto pelo preço praticado. "
+            "Priorize revisão de preço ou renegociação de custo com o fornecedor."
+        )
+        nivel = "critico"
+    else:
+        texto += (
+            ", uma margem de manobra estreita — qualquer aumento de custo do "
+            "fornecedor sem repasse de preço já reduz a rentabilidade dessa marca "
+            "a praticamente zero. Vale monitorar de perto."
+        )
+        nivel = "alerta"
+
+    zona_risco = prop[prop["percentual_sobre_faturamento"] >= 80]
+    if len(zona_risco) > 1:
+        outras = zona_risco.iloc[1:4][col_marca].tolist()
+        if outras:
+            texto += (
+                f" Também na zona de risco (custo acima de 80% do faturamento): "
+                f"{', '.join(str(x) for x in outras)}."
+            )
+
+    return [{"titulo": "Custo Líquido em Proporção ao Faturamento", "texto": texto, "nivel": nivel}]

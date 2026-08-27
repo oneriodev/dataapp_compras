@@ -123,3 +123,36 @@ def listar_margem_negativa(df: pd.DataFrame, mapping: dict, n: int = 10) -> pd.D
     )
     negativos = agrupado[agrupado["lucro"] < 0].sort_values("lucro").head(n)
     return negativos
+
+def calcular_proporcao_gasto(df: pd.DataFrame, agrupador: str, col_faturamento: str,
+                              col_gasto: str, faturamento_minimo: float = 0.0) -> pd.DataFrame:
+    """
+    Calcula, por grupo (marca ou produto), o percentual que uma coluna de
+    gasto (Custo Líquido, Imposto, etc.) representa sobre o faturamento —
+    diferente de simplesmente somar o valor absoluto, que é dominado por
+    volume de vendas (quem vende mais, gasta mais, sem revelar nada sobre
+    desproporção real entre custo e receita).
+
+    `faturamento_minimo` filtra grupos com faturamento muito baixo, que
+    distorcem o percentual por causa de amostra pequena (ex: uma marca
+    com R$ 66 de faturamento pode aparecer com 200%+ de custo por puro
+    ruído estatístico, sem significar problema de precificação real).
+    """
+    if not (agrupador and col_faturamento and col_gasto):
+        return pd.DataFrame()
+    if agrupador not in df.columns or col_faturamento not in df.columns or col_gasto not in df.columns:
+        return pd.DataFrame()
+
+    agrupado = (
+        df.groupby(agrupador, dropna=True)[[col_faturamento, col_gasto]]
+        .sum()
+        .reset_index()
+    )
+    agrupado = agrupado[agrupado[col_faturamento] > faturamento_minimo]
+    if agrupado.empty:
+        return pd.DataFrame()
+
+    agrupado["percentual_sobre_faturamento"] = (
+        agrupado[col_gasto] / agrupado[col_faturamento] * 100
+    ).round(1)
+    return agrupado.sort_values("percentual_sobre_faturamento", ascending=False)

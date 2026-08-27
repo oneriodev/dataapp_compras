@@ -7,7 +7,7 @@ e das marcas com maior valor de impostos.
 import streamlit as st
 
 from core.charts import grafico_barras, grafico_linha
-from core.metrics import top_n_por_metrica
+from core.metrics import calcular_proporcao_gasto, top_n_por_metrica
 
 
 def aba_maiores_gastos():
@@ -53,3 +53,42 @@ def aba_maiores_gastos():
             )
         else:
             st.info("Mapeie a coluna de 'Imposto' na barra lateral.")
+            st.divider()
+    st.subheader("📐 Gastos em Proporção ao Faturamento")
+    st.caption(
+        "Diferente dos rankings acima (que refletem principalmente volume de vendas), "
+        "aqui o percentual revela desproporção real entre custo/imposto e receita — "
+        "útil para achar marcas problemáticas mesmo com pouco volume."
+    )
+
+    if mapping.get("faturamento") and mapping.get("marca"):
+        faturamento_total = df[mapping["faturamento"]].sum()
+        limiar_relevancia = faturamento_total * 0.01  # ignora marcas com <1% do faturamento total
+
+        col3, col4 = st.columns(2)
+        with col3:
+            if mapping.get("custo_liquido"):
+                prop_custo = calcular_proporcao_gasto(
+                    df, mapping["marca"], mapping["faturamento"], mapping["custo_liquido"],
+                    faturamento_minimo=limiar_relevancia,
+                ).head(5)
+                grafico_barras(
+                    prop_custo, x=mapping["marca"], y="percentual_sobre_faturamento",
+                    titulo="Marcas com Maior % de Custo Líquido s/ Faturamento",
+                )
+            else:
+                st.info("Mapeie a coluna de 'Custo Líquido' na barra lateral.")
+        with col4:
+            if mapping.get("imposto"):
+                prop_imposto = calcular_proporcao_gasto(
+                    df, mapping["marca"], mapping["faturamento"], mapping["imposto"],
+                    faturamento_minimo=limiar_relevancia,
+                ).head(5)
+                grafico_barras(
+                    prop_imposto, x=mapping["marca"], y="percentual_sobre_faturamento",
+                    titulo="Marcas com Maior % de Imposto s/ Faturamento",
+                )
+            else:
+                st.info("Mapeie a coluna de 'Imposto' na barra lateral.")
+    else:
+        st.info("Mapeie 'Faturamento' e 'Marca' para ver os gastos em proporção.")
